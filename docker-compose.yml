@@ -1,0 +1,56 @@
+# Idea Dump: Signal bot + website. Works standalone (`docker compose up -d` here) or
+# pulled into a larger stack with `include:` (paths resolve relative to this file).
+# Model runs outside Docker: systemd --user ollama.service (NVIDIA T400 only).
+# Everything here is marked as a preferred OOM victim so Plex is never chosen first.
+name: idea-dump
+
+services:
+  idea-signal-api:
+    image: bbernhard/signal-cli-rest-api:0.102
+    container_name: idea-signal-api
+    environment:
+      - MODE=json-rpc
+    ports:
+      - "127.0.0.1:8099:8080"
+    volumes:
+      - ./signal:/home/.local/share/signal-cli
+    restart: unless-stopped
+    mem_limit: 1g
+    cpus: 1.0
+    oom_score_adj: 900
+
+  idea-bot:
+    build: ./bot
+    container_name: idea-bot
+    network_mode: host          # reach signal-api and ollama on 127.0.0.1
+    user: "1000:1000"
+    env_file: .env
+    environment:
+      - SIGNAL_API=http://127.0.0.1:8099
+      - OLLAMA_URL=http://127.0.0.1:11434
+      - DB_PATH=/data/ideas.db
+    volumes:
+      - ./data:/data
+    depends_on:
+      - idea-signal-api
+    restart: unless-stopped
+    mem_limit: 256m
+    cpus: 0.5
+    oom_score_adj: 900
+
+  idea-web:
+    build: ./web
+    container_name: idea-web
+    user: "1000:1000"
+    environment:
+      - DB_PATH=/data/ideas.db
+      - PORT=9001
+    ports:
+      - "9001:9001"
+    volumes:
+      - ./data:/data          # edits items; serves ./data/thumbs
+      - ./web-auth:/auth      # password hash + session key (mode 700); change with ./set-password.sh
+    restart: unless-stopped
+    mem_limit: 128m
+    cpus: 0.25
+    oom_score_adj: 900

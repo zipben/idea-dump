@@ -1,0 +1,9 @@
+# runtime data & secrets: never commit
+.env
+data/
+signal/
+web-auth/
+backups/
+signal-pin.txt
+__pycache__/
+*.pyc
