@@ -10,6 +10,9 @@ from db import INBOX
 
 log = logging.getLogger("handler")
 RECENT_SECS = 15 * 60  # "that's wrong" refers to the last save if it's this recent
+CORRECTION_WORDS = re.compile(
+    r"\b(?:no|nope|nah|not|wrong|incorrect|actually|should|move|put|file|goes?|belongs?|"
+    r"categor\w*|bucket|to-?do|todos?|task|idea|list)\b|#\d+|\bt\d+\b|^\s*(?:that|it|this)(?:'?s| is| was| one)\b", re.I)
 PENDING = {}  # {"item": id, "until": ts} after we ask "where should #N go?"
 UNDO = []     # stack of (description, callable returning reply text)
 
@@ -21,6 +24,7 @@ todo: <task> - add a to-do
 idea: <text> - save as an idea
 done t3 / undone t3 - check off / reopen
 cats - list idea categories
+describe <category>: <text> - tell me what belongs there
 ls <category> - last 10 ideas there
 find <words> - search ideas
 mv [#N] <category> - move last (or #N) idea
@@ -64,7 +68,40 @@ def _fmt_items(rows, show_cat=False):
 
 def _list_cats(db):
     rows = db.categories()
-    return "Categories:\n" + "\n".join(f'{c["name"]} ({c["n"]})' for c in rows)
+    def line(c):
+        d = c["description"]
+        return f'{c["name"]} ({c["n"]})' + (f' - {d[:60]}{"…" if len(d) > 60 else ""}' if d else "")
+    return "Categories:\n" + "\n".join(line(c) for c in rows)
+
+
+def _describe(db, name, desc):
+    cat = _match_category(db, name)
+    if desc is None:
+        if not cat:
+            return f'No category called "{name}". Create one with "describe {name}: what goes there".'
+        return (f'{cat["name"]}: {cat["description"]}' if cat["description"] else
+                f'{cat["name"]} has no description. Add one with "describe {cat["name"]}: what goes there".')
+    desc = desc.strip()[:300]
+    clear = desc.lower() in ("", "none", "clear", "-")
+    if not cat and clear:
+        return f'No category called "{name}".'
+    old = cat["description"] if cat else ""
+    row, created = db.set_description(cat["name"] if cat else name.title(), "" if clear else desc)
+
+    def undo(cid=row["id"], old=old, created=created):
+        if created:
+            db.c.execute("DELETE FROM categories WHERE id=? AND NOT EXISTS "
+                         "(SELECT 1 FROM items WHERE category_id=?)", (cid, cid))
+        else:
+            db.c.execute("UPDATE categories SET description=? WHERE id=?", (old, cid))
+        db.c.commit()
+        return "Undid the description change."
+    _push_undo("describe", undo)
+    if clear:
+        db.drop_if_empty(row["id"])
+        return f'Cleared the description for {row["name"]}.'
+    return (f'{"Created" if created else "Updated"} {row["name"]}: {row["description"]}\n'
+            "I'll use this when filing new ideas.")
 
 
 def _list_todos(db):
@@ -308,6 +345,9 @@ async def handle(db, text, signal_ts=None):
         if not it:
             return "No item to move."
         return _move(db, it, m.group(2), text)
+    m = re.fullmatch(r"(?:describe|desc)\s+([^:]{1,40}?)\s*(?::\s*(.*))?", text, re.I | re.S)
+    if m and (m.group(2) is not None or _match_category(db, m.group(1).strip(" ."))):
+        return _describe(db, m.group(1).strip(" ."), m.group(2))
     m = re.fullmatch(r"ls\s+(.+)", text, re.I)
     if m:
         return await _query(db, m.group(1), "")
@@ -356,6 +396,10 @@ async def handle(db, text, signal_ts=None):
     intent = r.get("intent")
     log.info("route %r -> %s", text[:60], r)
     num, tnum = r.get("item_number") or 0, r.get("todo_number") or 0
+    # a "fix the last thing" intent needs fix-it words; otherwise the model misread a new item
+    if intent in ("recategorize", "make_todo", "make_idea") and not CORRECTION_WORDS.search(text):
+        log.info("no correction words in %r, saving as new instead of %s", text[:60], intent)
+        intent = "idea"
 
     if intent == "todo":
         return _add_todo(db, text, signal_ts)

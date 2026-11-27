@@ -67,6 +67,7 @@ and run `docker compose up -d idea-bot`.
 
 ## Using it
 Send `help` to the bot for the full list. Highlights: `todo`, `todo: <task>`, `idea: <text>`,
+`describe <category>: <what belongs there>` (also editable on the category page),
 `done t3`, `undone t3`, `cats`, `ls <category>`, `find <words>`, `mv [#N] <category>`,
 `rm #N` / `rm t3`, `undo`. Natural language works for corrections and check-offs.
 

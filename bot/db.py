@@ -92,9 +92,16 @@ class DB:
         self.c.commit()
         return self.category_by_name(name), True
 
+    def set_description(self, name, description):
+        """Set a category's description, creating the category if needed. Returns (row, created)."""
+        row, created = self.ensure_category(name)
+        self.c.execute("UPDATE categories SET description=? WHERE id=?", (description.strip(), row["id"]))
+        self.c.commit()
+        return self.category_by_name(row["name"]), created
+
     def drop_if_empty(self, cat_id):
-        row = self.c.execute("SELECT name FROM categories WHERE id=?", (cat_id,)).fetchone()
-        if not row or row["name"].lower() == INBOX.lower():
+        row = self.c.execute("SELECT name, description FROM categories WHERE id=?", (cat_id,)).fetchone()
+        if not row or row["name"].lower() == INBOX.lower() or row["description"]:
             return
         n = self.c.execute("SELECT COUNT(*) FROM items WHERE category_id=?", (cat_id,)).fetchone()[0]
         if n == 0:

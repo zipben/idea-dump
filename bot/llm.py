@@ -84,6 +84,7 @@ Fields:
 - topic: what kind of thing this is, in a few words.
 - choice: the existing category this item belongs in, or "NEW" if none is the same kind of thing. Only pick an existing category if a typical item in it is the same kind of thing as this one. When in doubt, choose "NEW".
 - new_name: if choice is "NEW", a broad, reusable bucket name of 1-3 words in Title Case, general enough that many future items could share it (drop specifics: an app idea about libraries goes in a general app-ideas bucket, not a library-app bucket). If choice is not "NEW", "".
+Some categories have a [user's rule] the person wrote describing what belongs there. Those rules are the most important signal: if an item matches a category's rule, choose that category, and do not choose a category whose rule excludes the item.
 Follow the user's past corrections: they show how this person likes things filed."""
 
 
@@ -112,7 +113,8 @@ async def categorize(text, url_title, url_desc, cats, corrections):
     lines = ["Existing categories:" if cats else "Existing categories: none yet, so choose NEW."]
     for c in cats:
         ex = "; ".join(c["samples"]) if c["samples"] else "empty"
-        lines.append(f'- {c["name"]} (items like: {ex})')
+        desc = (c.get("description") or "").strip()
+        lines.append(f'- {c["name"]}' + (f' [user\'s rule: {desc}]' if desc else '') + f' (items like: {ex})')
     if corrections:
         lines.append("\nUser's past corrections (most recent first):")
         for co in corrections:

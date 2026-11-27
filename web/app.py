@@ -36,6 +36,8 @@ nav ul{list-style:none;margin:0;padding:0}nav li a{display:flex;justify-content:
 nav li a.on{background:var(--sel);font-weight:600}nav li a:hover{background:var(--sel);text-decoration:none}
 .n{color:var(--mut);font-variant-numeric:tabular-nums}
 h2{font-size:16px;margin:0 0 10px}
+.catdesc{margin:-4px 0 12px}.catdesc summary{cursor:pointer;color:var(--mut)}.catdesc .d{color:var(--mut);margin-bottom:4px;white-space:pre-wrap}
+.catdesc form{display:flex;flex-direction:column;gap:6px;margin-top:6px}.catdesc textarea{min-height:60px}
 .item{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-bottom:8px;display:flex;gap:12px}
 .item .body{flex:1;min-width:0}.item img{width:120px;height:80px;object-fit:cover;border-radius:6px;flex:none;background:var(--line)}
 .item .t{font-weight:600}.item .meta{color:var(--mut);font-size:13px;margin-top:2px}
@@ -219,7 +221,7 @@ def nav_html(c, active):
     cats = c.execute(
         "SELECT c.id, c.name, COUNT(i.id) n FROM categories c "
         "LEFT JOIN items i ON i.category_id=c.id GROUP BY c.id "
-        "HAVING n > 0 ORDER BY n DESC, c.name").fetchall()
+        "HAVING n > 0 OR (c.description != '' AND c.name != 'Inbox') ORDER BY n DESC, c.name").fetchall()
     total = c.execute("SELECT COUNT(*) FROM items").fetchone()[0]
     nav = [f'<li><a class="{"on" if active == "all" else ""}" href="/">All ideas<span class="n">{total}</span></a></li>']
     for x in cats:
@@ -232,6 +234,7 @@ def nav_html(c, active):
 def page_list(qs, back):
     cat_id = qs.get("cat", [""])[0]
     q = qs.get("q", [""])[0].strip()
+    extra = ""
     with db() as c:
         nav = nav_html(c, cat_id if cat_id.isdigit() else ("" if q else "all"))
         todos = todo_panel(c, back)
@@ -245,15 +248,24 @@ def page_list(qs, back):
         elif cat_id.isdigit():
             rows = c.execute(base + "WHERE i.category_id=? ORDER BY i.id DESC",
                              (int(cat_id),)).fetchall()
-            r = c.execute("SELECT name FROM categories WHERE id=?", (int(cat_id),)).fetchone()
+            r = c.execute("SELECT id, name, description FROM categories WHERE id=?", (int(cat_id),)).fetchone()
             heading = e(r["name"] if r else "Unknown category")
+            if r:
+                d = r["description"]
+                extra = f"""<details class="catdesc">
+<summary>{"Rule for the bot: " + e(d[:80]) + ("…" if len(d) > 80 else "") if d else "Add a description to guide the bot"}</summary>
+<form method="post" action="/category/describe"><input type="hidden" name="id" value="{r["id"]}">
+<input type="hidden" name="back" value="{e(back)}">
+<textarea name="description" maxlength="300" placeholder="What belongs here, e.g. Mechanics, abilities and systems for my game. Not whole game concepts.">{e(d)}</textarea>
+<div class="hint">The bot follows this when filing new ideas. Leave blank to remove.</div>
+<div class="row"><button>Save description</button></div></form></details>"""
         else:
             rows = c.execute(base + "ORDER BY i.id DESC LIMIT 200").fetchall()
             heading = "Everything (newest first)"
     show_cat = not cat_id.isdigit()
     body = "".join(item_html(r, show_cat, back) for r in rows) or '<p class="empty">Nothing here yet.</p>'
     return shell("Idea Dump", f'<div class="wrap">{nav}'
-                              f'<main><h2>{heading}</h2>{body}</main>{todos}</div>', q)
+                              f'<main><h2>{heading}</h2>{extra}{body}</main>{todos}</div>', q)
 
 
 def btn(action, tid, label, back):
@@ -365,8 +377,8 @@ def page_edit(item_id, back, err=""):
 
 
 def drop_if_empty(c, cat_id):
-    row = c.execute("SELECT name FROM categories WHERE id=?", (cat_id,)).fetchone()
-    if row and row["name"].lower() != INBOX.lower():
+    row = c.execute("SELECT name, description FROM categories WHERE id=?", (cat_id,)).fetchone()
+    if row and row["name"].lower() != INBOX.lower() and not row["description"]:
         if not c.execute("SELECT 1 FROM items WHERE category_id=? LIMIT 1", (cat_id,)).fetchone():
             c.execute("DELETE FROM categories WHERE id=?", (cat_id,))
 
@@ -512,6 +524,12 @@ class H(BaseHTTPRequestHandler):
                     return self.send(400, (out or e(err)).encode())
             elif self.path == "/delete":
                 delete_item(f)
+            elif self.path == "/category/describe":
+                cid = f.get("id", "")
+                if cid.isdigit():
+                    with db() as c:
+                        c.execute("UPDATE categories SET description=? WHERE id=?",
+                                  (f.get("description", "").strip()[:300], int(cid)))
             elif self.path.startswith("/todo/") or self.path == "/to-todo":
                 back = todo_action(self.path, f, back)
             else:
