@@ -315,6 +315,20 @@ async def handle(db, text, signal_ts=None):
     if m:
         return await _query(db, "", m.group(1))
 
+    # ---- bare "wrong"/"no": ask where the last idea should go (never guess) ----
+    if re.fullmatch(r"(?:no+|nope|nah|wrong|not right|incorrect|that'?s wrong|that'?s not right|"
+                    r"wrong (?:category|bucket|one|place)|bad category)[ .!]*", low):
+        recent = _recent(_last_saved(db))
+        if recent and recent["kind"] == "todo":
+            return (f't{recent["id"]} "{recent["text"]}" is on your to-do list. '
+                    'Say "that\'s an idea" to file it as an idea instead.')
+        it = db.item(recent["id"]) if recent else db.last_item()
+        if not it:
+            return "Nothing to fix yet."
+        PENDING.update(item=it["id"], until=time.time() + RECENT_SECS)
+        return (f'Where should #{it["id"]} "{it["title"]}" go? '
+                'Reply with a category, e.g. "Recipes", or "that\'s a to-do".')
+
     # ---- a bare link is an idea; a link with words gets routed ----
     url = links.find_url(text)
     if url and len(text.replace(url, "").split()) < 3:
@@ -327,7 +341,7 @@ async def handle(db, text, signal_ts=None):
         PENDING.clear()
         m = re.fullmatch(r"(?:(?:put|move|file)\s+(?:it\s+)?(?:in(?:to)?|under|to)\s+)?(.{1,40})", text, re.I)
         it = db.item(item_id)
-        if it and m and len(m.group(1).split()) <= 4:
+        if it and m and len(m.group(1).split()) <= 4 and not re.search(r"to-?do|to do|task|\bidea\b", low):
             return _move(db, it, m.group(1).strip(" .!"), text)
     PENDING.clear()
 
